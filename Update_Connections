@@ -1,0 +1,123 @@
+import tableauserverclient as tsc
+# from pprint import pprint
+import csv
+
+# connections
+old_username = ''
+old_connection_address = ''
+new_connection_address = ''
+new_username = ''
+new_password = ''
+# tableau server
+tableau_server_url = ''
+tableau_token_name = ''
+tableau_token_value = ''
+
+
+def main():
+    server = sign_in_with_token(tableau_server_url, tableau_token_name, tableau_token_value)
+
+    ## get all athena connections
+    all_wb = list(tsc.Pager(server.workbooks))
+    all_ds = list(tsc.Pager(server.datasources))
+
+    connections_list = []
+    connections_list.extend(update_source_connections_details(server, all_wb, 'workbook'))
+    connections_list.extend(update_source_connections_details(server, all_ds, 'datasource'))
+    store_results_to_csv(connections_list)
+
+    sign_out(server)
+
+
+## SERVER ##############################
+
+def sign_in(server_url, username, password, site_name=None):
+    server = tsc.Server(server_url, use_server_version=True)
+    tableau_auth = tsc.TableauAuth(username, password, site_name)
+    # server.add_http_options({'verify': False})
+    server.auth.sign_in(tableau_auth)
+    return server
+
+
+def sign_in_with_token(server_url, token_name, token_value):
+    server = tsc.Server(server_url, use_server_version=True)
+    tableau_auth = tsc.PersonalAccessTokenAuth(token_name, token_value)
+    server.auth.sign_in(tableau_auth)
+    return server
+
+
+def sign_out(server):
+    server.auth.sign_out()
+
+
+def get_workbook_by_name(server, wb_name):
+    req_option = tsc.RequestOptions()
+    req_option.filter.add(tsc.Filter(tsc.RequestOptions.Field.Name, tsc.RequestOptions.Operator.Equals, wb_name))
+    matching_workbooks, pagination_item = server.workbooks.get(req_option)
+    assert len(matching_workbooks) > 0, 'No workbook named {0} found'.format(wb_name)
+    workbook = matching_workbooks[0]
+    return workbook
+
+
+def update_source_connections_details(server, sources_list, source_type):
+    updated_connections_list = []
+    for source_obj in sources_list:
+        populate_connections(server, source_obj, source_type)
+        for con in source_obj.connections:
+            # if to update
+            if con.username == old_username and con.server_address == old_connection_address:
+                # save connection details
+                print(source_obj.name)
+                updated_connections_list.append([source_type, source_obj.name, source_obj.project_name, source_obj.owner_id,
+                                     get_user_name_by_id(server, source_obj.owner_id), con.connection_type, con.username, con.server_address])
+                # update connection
+                con.server_address = new_connection_address
+                con.username = new_username
+                con.password = new_password
+                con.embed_password = True
+                update_connection(server, source_obj, source_type, con)
+    return updated_connections_list
+
+
+def populate_connections(server, source, source_type):
+    if source_type == 'workbook':
+        server.workbooks.populate_connections(source)
+    elif source_type == 'datasource':
+        server.datasources.populate_connections(source)
+    elif source_type == 'flow':
+        server.flows.populate_connections(source)
+
+
+def get_user_name_by_id(server, user_id):
+    usr = server.users.get_by_id(user_id)
+    return usr.name
+
+
+def store_results_to_csv(final_results):
+    # todo: handle case of exsiting csv file
+    file = open('test_NI.csv', 'w+', newline ='')
+    with file:
+        write = csv.writer(file)
+        write.writerow(['Resource Type',
+                        'Name',
+                        'Project Name',
+                        'Owner Id',
+                        'Owner Name',
+                        'connection connection_type',
+                        'connection username',
+                        'connection server_address'])
+        write.writerows(final_results)
+
+
+def update_connection(server, source, source_type, connection):
+    if source_type == 'workbook':
+        server.workbooks.update_connection(source, connection)
+    elif source_type == 'datasource':
+        server.datasources.update_connection(source, connection)
+    elif source_type == 'flow':
+        server.flows.update_connection(source, connection)
+
+
+if __name__ == '__main__':
+    main()
+
